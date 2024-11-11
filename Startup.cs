@@ -2,7 +2,11 @@
 using Azure.Storage.Blobs;
 using BackEnd.Entities;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System;
 
 namespace BackEnd
 {
@@ -21,23 +25,33 @@ namespace BackEnd
             {
                 Console.WriteLine("Starting ConfigureServices...");
 
-                // Key Vault configuration
-                var keyVaultEndpoint = new Uri("https://firstenxkv.vault.azure.net/");
+                // Connect to Azure App Configuration
+               var appConfigConnectionString = "Endpoint=https://azurermtenx.azconfig.io;" +
+                                 "Id=8FPB;" +
+                                 "Secret=" +
+                                 "3NCoPOSo0Y1ykrX6ih9ObYVbY2ZA6RLqaXyMyBI04eB5k4wkhpA5JQQJ99AKACGhslBY0DYHAAACAZAC1woJ";
+
+
+
                 var updatedConfiguration = new ConfigurationBuilder()
                     .AddConfiguration(_configuration)
-                    .AddAzureKeyVault(keyVaultEndpoint, new DefaultAzureCredential())
+                    .AddAzureAppConfiguration(options =>
+                    {
+                        options.Connect(appConfigConnectionString)
+                               .ConfigureKeyVault(kv => kv.SetCredential(new DefaultAzureCredential())); // Optional: Securely access Key Vault from App Configuration
+                    })
                     .Build();
 
-                Console.WriteLine("Key Vault configuration loaded.");
+                Console.WriteLine("Azure App Configuration loaded.");
 
-                // Retrieve secrets
+                // Retrieve configuration values
                 var cosmosDbConnectionString = updatedConfiguration["CosmosDbConnectionString"];
                 var blobConnectionString = updatedConfiguration["BlobConnectionString"];
                 var apiKey = updatedConfiguration["ApiKey"];
 
                 if (string.IsNullOrEmpty(cosmosDbConnectionString) || string.IsNullOrEmpty(blobConnectionString) || string.IsNullOrEmpty(apiKey))
                 {
-                    throw new Exception("Required configuration is missing. Check CosmosDbConnectionString, BlobConnectionString, and ApiKey1.");
+                    throw new Exception("Required configuration is missing. Check CosmosDbConnectionString, BlobConnectionString, and ApiKey.");
                 }
 
                 // Cosmos DB configuration
@@ -57,7 +71,7 @@ namespace BackEnd
                 services.AddSingleton(x => new BlobServiceClient(blobConnectionString));
                 Console.WriteLine("Blob Storage client configured.");
 
-                // Configuration for dependency injection
+                // Register updated configuration for DI
                 services.AddSingleton<IConfiguration>(updatedConfiguration);
 
                 // Enable CORS
@@ -89,7 +103,6 @@ namespace BackEnd
             {
                 logger.LogInformation("Starting Configure...");
 
-
                 if (env.IsDevelopment())
                 {
                     app.UseDeveloperExceptionPage();
@@ -101,7 +114,7 @@ namespace BackEnd
                 app.UseHttpsRedirection();
                 app.UseRouting();
                 app.UseCors("AllowAll");
-                app.UseMiddleware<ApiKeyMiddleware>();
+                app.UseMiddleware<ApiKeyMiddleware>(); // Make sure to check API Key for requests
 
                 logger.LogInformation("Middleware configured.");
 
