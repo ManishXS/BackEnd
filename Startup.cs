@@ -113,6 +113,7 @@ namespace BackEnd
 
                 app.UseHttpsRedirection();
                 app.UseRouting();
+                app.UseMiddleware<SkipAuthorizationMiddleware>();
                 app.UseCors("AllowAll");
 
                 logger.LogInformation("Middleware configured.");
