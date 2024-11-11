@@ -114,7 +114,6 @@ namespace BackEnd
                 app.UseHttpsRedirection();
                 app.UseRouting();
                 app.UseCors("AllowAll");
-                app.UseMiddleware<ApiKeyMiddleware>(); // Make sure to check API Key for requests
 
                 logger.LogInformation("Middleware configured.");
 
