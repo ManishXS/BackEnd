@@ -1,4 +1,5 @@
 ﻿using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Specialized;
 using BackEnd.Entities;
 using BackEnd.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -26,30 +27,47 @@ namespace BackEnd.Controllers
         {
             try
             {
+                // Set the file size limit to 0.5 GB
+                const long maxFileSize = 524_288_000;
+
                 if (model.File == null || string.IsNullOrEmpty(model.UserId) || string.IsNullOrEmpty(model.FileName))
                 {
                     return BadRequest("Missing required fields.");
                 }
 
+                // Check the file size limit
+                if (model.File.Length > maxFileSize)
+                {
+                    return BadRequest("File size exceeds the 0.5 GB limit.");
+                }
 
                 var containerClient = _blobServiceClient.GetBlobContainerClient(_feedContainer);
+                await containerClient.CreateIfNotExistsAsync();
 
                 var blobName = $"{Guid.NewGuid()}-{model.File.FileName}";
-                var blobClient = containerClient.GetBlobClient(blobName);
+                var blockBlobClient = containerClient.GetBlockBlobClient(blobName);
 
                 using (var stream = model.File.OpenReadStream())
                 {
-                    await blobClient.UploadAsync(stream);
+                    // Open a writable stream to the blob for chunked uploads
+                    using (var blobStream = await blockBlobClient.OpenWriteAsync(overwrite: true, new Azure.Storage.Blobs.Models.BlockBlobOpenWriteOptions
+                    {
+                        BufferSize = 4 * 1024 * 1024, // 4 MB buffer for chunk size
+                    }))
+                    {
+                        await stream.CopyToAsync(blobStream); // Write the stream in chunks
+                        await blobStream.FlushAsync(); // Ensure all data is flushed
+                    }
                 }
 
-                var blobUrl = blobClient.Uri.ToString();
+                var blobUrl = blockBlobClient.Uri.ToString();
 
                 var feed = new Feed
                 {
-                    id = Guid.NewGuid().ToString(),  
+                    id = Guid.NewGuid().ToString(),
                     UserId = model.UserId,
                     Description = model.Description,
-                    FeedUrl = blobUrl,  
+                    FeedUrl = blobUrl,
                     UploadDate = DateTime.UtcNow
                 };
 
@@ -62,6 +80,8 @@ namespace BackEnd.Controllers
                 return StatusCode(500, $"Error uploading feed: {ex.Message}");
             }
         }
+
+
 
         [HttpGet("getUserFeeds")]
         public async Task<IActionResult> GetUserFeeds(string? userId = null, int pageNumber = 1, int pageSize = 10)
