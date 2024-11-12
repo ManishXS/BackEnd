@@ -22,5 +22,13 @@ namespace BackEnd.Models
 
         [JsonPropertyName("file")]
         public IFormFile File { get; set; } = null!;  // Use IFormFile to handle file upload
+
+        // Add ChunkIndex to track the chunk number being uploaded
+        [JsonPropertyName("chunkIndex")]
+        public int ChunkIndex { get; set; }
+
+        // Add TotalChunks to track the total number of chunks for the file
+        [JsonPropertyName("totalChunks")]
+        public int TotalChunks { get; set; }
     }
 }

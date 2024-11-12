@@ -1,4 +1,5 @@
 ﻿using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
 using Azure.Storage.Blobs.Specialized;
 using BackEnd.Entities;
 using BackEnd.Models;
@@ -27,61 +28,47 @@ namespace BackEnd.Controllers
         {
             try
             {
-                // Set the file size limit to 0.5 GB
-                const long maxFileSize = 524_288_000;
-
                 if (model.File == null || string.IsNullOrEmpty(model.UserId) || string.IsNullOrEmpty(model.FileName))
                 {
                     return BadRequest("Missing required fields.");
                 }
 
-                // Check the file size limit
-                if (model.File.Length > maxFileSize)
-                {
-                    return BadRequest("File size exceeds the 0.5 GB limit.");
-                }
-
                 var containerClient = _blobServiceClient.GetBlobContainerClient(_feedContainer);
-                await containerClient.CreateIfNotExistsAsync();
 
-                var blobName = $"{Guid.NewGuid()}-{model.File.FileName}";
-                var blockBlobClient = containerClient.GetBlockBlobClient(blobName);
+                // Unique blob name with GUID for the file
+                var blobName = $"{Guid.NewGuid()}-{model.FileName}";
+                var blobClient = containerClient.GetBlobClient(blobName);
 
+                // Accessing the blob as a BlockBlobClient for chunked upload
+                var blockBlobClient = containerClient.GetBlockBlobClient(blobName); // Fix: pass blobName
+
+                List<string> blockIds = new List<string>();  // List to track the block IDs
+
+                // Upload the chunk to the blob storage
                 using (var stream = model.File.OpenReadStream())
                 {
-                    // Open a writable stream to the blob for chunked uploads
-                    using (var blobStream = await blockBlobClient.OpenWriteAsync(overwrite: true, new Azure.Storage.Blobs.Models.BlockBlobOpenWriteOptions
-                    {
-                        BufferSize = 4 * 1024 * 1024, // 4 MB buffer for chunk size
-                    }))
-                    {
-                        await stream.CopyToAsync(blobStream); // Write the stream in chunks
-                        await blobStream.FlushAsync(); // Ensure all data is flushed
-                    }
+                    // Generate a GUID for the chunk block
+                    string blockId = Convert.ToBase64String(Guid.NewGuid().ToByteArray());
+                    blockIds.Add(blockId);  // Add the block ID to the list
+
+                    // Upload the block (chunk) to the blob storage
+                    await blockBlobClient.StageBlockAsync(blockId, stream);
                 }
 
-                var blobUrl = blockBlobClient.Uri.ToString();
-
-                var feed = new Feed
+                // If the chunk is the last one, commit all blocks to form the complete file
+                if (model.ChunkIndex == model.TotalChunks - 1)
                 {
-                    id = Guid.NewGuid().ToString(),
-                    UserId = model.UserId,
-                    Description = model.Description,
-                    FeedUrl = blobUrl,
-                    UploadDate = DateTime.UtcNow
-                };
+                    // Commit all blocks (chunks) to form the final file
+                    await blockBlobClient.CommitBlockListAsync(blockIds);
+                }
 
-                await _dbContext.FeedsContainer.CreateItemAsync(feed);
-
-                return Ok(new { Message = "Feed uploaded successfully.", FeedId = feed.id });
+                return Ok(new { Message = "Feed uploaded successfully." });
             }
             catch (Exception ex)
             {
                 return StatusCode(500, $"Error uploading feed: {ex.Message}");
             }
         }
-
-
 
         [HttpGet("getUserFeeds")]
         public async Task<IActionResult> GetUserFeeds(string? userId = null, int pageNumber = 1, int pageSize = 10)
