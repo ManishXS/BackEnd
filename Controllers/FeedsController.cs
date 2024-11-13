@@ -34,41 +34,45 @@ namespace BackEnd.Controllers
                 }
 
                 var containerClient = _blobServiceClient.GetBlobContainerClient(_feedContainer);
-
-                // Unique blob name with GUID for the file
-                var blobName = $"{Guid.NewGuid()}-{model.FileName}";
+                var blobName = $"{Guid.NewGuid()}-{model.File.FileName}";
                 var blobClient = containerClient.GetBlobClient(blobName);
 
-                // Accessing the blob as a BlockBlobClient for chunked upload
-                var blockBlobClient = containerClient.GetBlockBlobClient(blobName); // Fix: pass blobName
-
-                List<string> blockIds = new List<string>();  // List to track the block IDs
-
-                // Upload the chunk to the blob storage
+                // Upload the file to blob storage
                 using (var stream = model.File.OpenReadStream())
                 {
-                    // Generate a GUID for the chunk block
-                    string blockId = Convert.ToBase64String(Guid.NewGuid().ToByteArray());
-                    blockIds.Add(blockId);  // Add the block ID to the list
-
-                    // Upload the block (chunk) to the blob storage
-                    await blockBlobClient.StageBlockAsync(blockId, stream);
+                    await blobClient.UploadAsync(stream);
                 }
 
-                // If the chunk is the last one, commit all blocks to form the complete file
-                if (model.ChunkIndex == model.TotalChunks - 1)
+                var blobUrl = blobClient.Uri.ToString();
+
+                // Create the Feed object to store in Cosmos DB
+                var feed = new Feed
                 {
-                    // Commit all blocks (chunks) to form the final file
-                    await blockBlobClient.CommitBlockListAsync(blockIds);
-                }
+                    id = Guid.NewGuid().ToString(),
+                    UserId = model.UserId,
+                    Description = model.Description,
+                    FeedUrl = blobUrl,
+                    UploadDate = DateTime.UtcNow
+                };
 
-                return Ok(new { Message = "Feed uploaded successfully." });
+                // Store the feed document in Cosmos DB
+                await _dbContext.FeedsContainer.CreateItemAsync(feed);
+
+                // Return the blob URL and feed document in the response
+                return Ok(new
+                {
+                    Message = "Feed uploaded successfully.",
+                    FeedId = feed.id,
+                    FeedUrl = blobUrl,
+                    FeedDocument = feed // You can return the entire feed document, or just select necessary properties.
+                });
             }
             catch (Exception ex)
             {
                 return StatusCode(500, $"Error uploading feed: {ex.Message}");
             }
         }
+
 
         [HttpGet("getUserFeeds")]
         public async Task<IActionResult> GetUserFeeds(string? userId = null, int pageNumber = 1, int pageSize = 10)
