@@ -1,10 +1,12 @@
 ﻿using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
+using Azure.Storage.Blobs.Specialized;
 using BackEnd.Entities;
 using BackEnd.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
+using System.Text;
 
 namespace BackEnd.Controllers
 {
@@ -26,7 +28,7 @@ namespace BackEnd.Controllers
         }
 
         [HttpPost("uploadFeed")]
-        public async Task<IActionResult> UploadFeed([FromForm] FeedUploadModel model)
+        public async Task<IActionResult> UploadFeed([FromForm] FeedUploadModel model, [FromForm] int? chunkIndex = null, [FromForm] int? totalChunks = null)
         {
             try
             {
@@ -36,83 +38,67 @@ namespace BackEnd.Controllers
                 }
 
                 var containerClient = _blobServiceClient.GetBlobContainerClient(_feedContainer);
+                var blobName = model.FileName;
 
-                // Generate a unique blob name based on the file name and existing files in the container
-                var blobName = await GenerateUniqueBlobName(containerClient, model.File.FileName);
-                var blobClient = containerClient.GetBlobClient(blobName);
+                // Use BlockBlobClient directly from the container client
+                var blockBlobClient = containerClient.GetBlockBlobClient(blobName);
 
-                // Upload the file to blob storage
-                using (var stream = model.File.OpenReadStream())
+                // For chunked upload
+                if (chunkIndex.HasValue && totalChunks.HasValue)
                 {
-                    await blobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = model.ContentType });
-                }
+                    var blockId = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{chunkIndex:D6}"));
+                    using (var stream = model.File.OpenReadStream())
+                    {
+                        await blockBlobClient.StageBlockAsync(blockId, stream);
+                    }
 
-                var blobUrl = blobClient.Uri.ToString();
-                Console.WriteLine($"Blob uploaded with URL: {blobUrl}");
-
-                // Create the Feed object to store in Cosmos DB
-                var feed = new Feed
-                {
-                    id = Guid.NewGuid().ToString(),
-                    UserId = model.UserId,
-                    Description = model.Description,
-                    FeedUrl = blobUrl,
-                    ContentType = model.ContentType,
-                    FileSize = model.FileSize,
-                    UploadDate = DateTime.UtcNow
-                };
-
-                // Store the feed document in Cosmos DB
-                await _dbContext.FeedsContainer.CreateItemAsync(feed);
-                Console.WriteLine($"Document stored in Cosmos DB with id: {feed.id}");
-
-                return Ok(new
-                {
-                    Message = "Feed uploaded successfully.",
-                    FeedId = feed.id,
-                    FeedUrl = blobUrl,
-                    FeedDocument = feed
-                });
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error uploading feed: {ex.Message}");
-                return StatusCode(500, $"Error uploading feed: {ex.Message}");
-            }
-        }
-
-        // Method to generate a unique blob name by checking existing files
-        private async Task<string> GenerateUniqueBlobName(BlobContainerClient containerClient, string originalFileName)
-        {
-            var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(originalFileName);
-            var fileExtension = Path.GetExtension(originalFileName);
-            var blobName = originalFileName;
-
-            if (_fileNameCounters.ContainsKey(fileNameWithoutExtension))
-            {
-                // If the file name already exists in our dictionary, increment the counter
-                int counter = ++_fileNameCounters[fileNameWithoutExtension];
-                blobName = $"{fileNameWithoutExtension}-{counter}{fileExtension}";
-            }
-            else
-            {
-                // Check if a blob with the same name already exists
-                var existingBlob = containerClient.GetBlobClient(blobName);
-                if (await existingBlob.ExistsAsync())
-                {
-                    // If it exists, initialize a counter for this file name
-                    int counter = 1;
-                    blobName = $"{fileNameWithoutExtension}-{counter}{fileExtension}";
-                    _fileNameCounters[fileNameWithoutExtension] = counter;
+                    // Commit blocks after final chunk
+                    if (chunkIndex.Value == totalChunks.Value - 1)
+                    {
+                        var blockList = Enumerable.Range(0, totalChunks.Value)
+                            .Select(i => Convert.ToBase64String(Encoding.UTF8.GetBytes($"{i:D6}"))).ToList();
+                        await blockBlobClient.CommitBlockListAsync(blockList);
+                        return await SaveFeedToCosmosDb(blockBlobClient.Uri.ToString(), model);
+                    }
                 }
                 else
                 {
-                    // No duplicates; add the filename without appending a counter
-                    _fileNameCounters[fileNameWithoutExtension] = 0;
+                    // Direct upload for small files
+                    using (var stream = model.File.OpenReadStream())
+                    {
+                        await blockBlobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = model.ContentType });
+                    }
+                    return await SaveFeedToCosmosDb(blockBlobClient.Uri.ToString(), model);
                 }
-            }
 
-            return blobName;
+                return Ok(new { Message = "Chunk uploaded successfully." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error uploading feed: {ex.Message}");
+            }
+        }
+        private async Task<IActionResult> SaveFeedToCosmosDb(string blobUrl, FeedUploadModel model)
+        {
+            var feed = new Feed
+            {
+                id = Guid.NewGuid().ToString(),
+                UserId = model.UserId,
+                Description = model.Description,
+                FeedUrl = blobUrl,
+                ContentType = model.ContentType,
+                FileSize = model.FileSize,
+                UploadDate = DateTime.UtcNow
+            };
+
+            await _dbContext.FeedsContainer.CreateItemAsync(feed);
+            return Ok(new
+            {
+                Message = "Feed uploaded successfully.",
+                FeedId = feed.id,
+                FeedUrl = blobUrl,
+                FeedDocument = feed
+            });
         }
 
         [HttpGet("getUserFeeds")]
