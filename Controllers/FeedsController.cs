@@ -1,16 +1,10 @@
 ﻿using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using BackEnd.Entities;
-using BackEnd.Helpers;  // Import the helper
 using BackEnd.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Threading.Tasks;
 
 namespace BackEnd.Controllers
 {
@@ -21,6 +15,9 @@ namespace BackEnd.Controllers
         private readonly CosmosDbContext _dbContext;
         private readonly BlobServiceClient _blobServiceClient;
         private readonly string _feedContainer = "media";
+
+        // Static dictionary to store current session filenames and counters
+        private static Dictionary<string, int> _fileNameCounters = new Dictionary<string, int>();
 
         public FeedsController(CosmosDbContext dbContext, BlobServiceClient blobServiceClient)
         {
@@ -40,8 +37,8 @@ namespace BackEnd.Controllers
 
                 var containerClient = _blobServiceClient.GetBlobContainerClient(_feedContainer);
 
-                // Generate unique file name using the helper
-                var blobName = FileNameHelper.GenerateUniqueFileName(model.File.FileName);
+                // Generate a unique blob name based on the file name and existing files in the container
+                var blobName = await GenerateUniqueBlobName(containerClient, model.File.FileName);
                 var blobClient = containerClient.GetBlobClient(blobName);
 
                 // Upload the file to blob storage
@@ -82,6 +79,40 @@ namespace BackEnd.Controllers
                 Console.WriteLine($"Error uploading feed: {ex.Message}");
                 return StatusCode(500, $"Error uploading feed: {ex.Message}");
             }
+        }
+
+        // Method to generate a unique blob name by checking existing files
+        private async Task<string> GenerateUniqueBlobName(BlobContainerClient containerClient, string originalFileName)
+        {
+            var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(originalFileName);
+            var fileExtension = Path.GetExtension(originalFileName);
+            var blobName = originalFileName;
+
+            if (_fileNameCounters.ContainsKey(fileNameWithoutExtension))
+            {
+                // If the file name already exists in our dictionary, increment the counter
+                int counter = ++_fileNameCounters[fileNameWithoutExtension];
+                blobName = $"{fileNameWithoutExtension}-{counter}{fileExtension}";
+            }
+            else
+            {
+                // Check if a blob with the same name already exists
+                var existingBlob = containerClient.GetBlobClient(blobName);
+                if (await existingBlob.ExistsAsync())
+                {
+                    // If it exists, initialize a counter for this file name
+                    int counter = 1;
+                    blobName = $"{fileNameWithoutExtension}-{counter}{fileExtension}";
+                    _fileNameCounters[fileNameWithoutExtension] = counter;
+                }
+                else
+                {
+                    // No duplicates; add the filename without appending a counter
+                    _fileNameCounters[fileNameWithoutExtension] = 0;
+                }
+            }
+
+            return blobName;
         }
 
         [HttpGet("getUserFeeds")]
