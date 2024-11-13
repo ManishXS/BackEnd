@@ -1,6 +1,7 @@
 ﻿using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using BackEnd.Entities;
+using BackEnd.Helpers;  // Import the helper
 using BackEnd.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Cosmos;
@@ -32,28 +33,27 @@ namespace BackEnd.Controllers
         {
             try
             {
-                // Check for required fields
                 if (model.File == null || string.IsNullOrEmpty(model.UserId) || string.IsNullOrEmpty(model.FileName))
                 {
-                    return BadRequest("File, UserId, and FileName are required.");
+                    return BadRequest("Missing required fields.");
                 }
 
-                // Get blob container client and set the unique blob name
                 var containerClient = _blobServiceClient.GetBlobContainerClient(_feedContainer);
-                var blobName = $"{Guid.NewGuid()}-{Path.GetFileName(model.File.FileName)}";
+
+                // Generate unique file name using the helper
+                var blobName = FileNameHelper.GenerateUniqueFileName(model.File.FileName);
                 var blobClient = containerClient.GetBlobClient(blobName);
 
-                // Upload file to blob storage with its content type
+                // Upload the file to blob storage
                 using (var stream = model.File.OpenReadStream())
                 {
                     await blobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = model.ContentType });
                 }
 
-                // Get the full URL of the uploaded blob
                 var blobUrl = blobClient.Uri.ToString();
                 Console.WriteLine($"Blob uploaded with URL: {blobUrl}");
 
-                // Create feed object for Cosmos DB
+                // Create the Feed object to store in Cosmos DB
                 var feed = new Feed
                 {
                     id = Guid.NewGuid().ToString(),
@@ -65,11 +65,10 @@ namespace BackEnd.Controllers
                     UploadDate = DateTime.UtcNow
                 };
 
-                // Insert feed into Cosmos DB
+                // Store the feed document in Cosmos DB
                 await _dbContext.FeedsContainer.CreateItemAsync(feed);
                 Console.WriteLine($"Document stored in Cosmos DB with id: {feed.id}");
 
-                // Return blob URL and feed document in response
                 return Ok(new
                 {
                     Message = "Feed uploaded successfully.",
