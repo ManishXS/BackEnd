@@ -1,11 +1,15 @@
 ﻿using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
-using Azure.Storage.Blobs.Specialized;
 using BackEnd.Entities;
 using BackEnd.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Azure.Cosmos.Linq;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace BackEnd.Controllers
 {
@@ -15,7 +19,7 @@ namespace BackEnd.Controllers
     {
         private readonly CosmosDbContext _dbContext;
         private readonly BlobServiceClient _blobServiceClient;
-        private readonly string _feedContainer = "media"; 
+        private readonly string _feedContainer = "media";
 
         public FeedsController(CosmosDbContext dbContext, BlobServiceClient blobServiceClient)
         {
@@ -28,51 +32,58 @@ namespace BackEnd.Controllers
         {
             try
             {
+                // Check for required fields
                 if (model.File == null || string.IsNullOrEmpty(model.UserId) || string.IsNullOrEmpty(model.FileName))
                 {
-                    return BadRequest("Missing required fields.");
+                    return BadRequest("File, UserId, and FileName are required.");
                 }
 
+                // Get blob container client and set the unique blob name
                 var containerClient = _blobServiceClient.GetBlobContainerClient(_feedContainer);
-                var blobName = $"{Guid.NewGuid()}-{model.File.FileName}";
+                var blobName = $"{Guid.NewGuid()}-{Path.GetFileName(model.File.FileName)}";
                 var blobClient = containerClient.GetBlobClient(blobName);
 
-                // Upload the file to blob storage
+                // Upload file to blob storage with its content type
                 using (var stream = model.File.OpenReadStream())
                 {
-                    await blobClient.UploadAsync(stream);
+                    await blobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = model.ContentType });
                 }
 
+                // Get the full URL of the uploaded blob
                 var blobUrl = blobClient.Uri.ToString();
+                Console.WriteLine($"Blob uploaded with URL: {blobUrl}");
 
-                // Create the Feed object to store in Cosmos DB
+                // Create feed object for Cosmos DB
                 var feed = new Feed
                 {
                     id = Guid.NewGuid().ToString(),
                     UserId = model.UserId,
                     Description = model.Description,
                     FeedUrl = blobUrl,
+                    ContentType = model.ContentType,
+                    FileSize = model.FileSize,
                     UploadDate = DateTime.UtcNow
                 };
 
-                // Store the feed document in Cosmos DB
+                // Insert feed into Cosmos DB
                 await _dbContext.FeedsContainer.CreateItemAsync(feed);
+                Console.WriteLine($"Document stored in Cosmos DB with id: {feed.id}");
 
-                // Return the blob URL and feed document in the response
+                // Return blob URL and feed document in response
                 return Ok(new
                 {
                     Message = "Feed uploaded successfully.",
                     FeedId = feed.id,
                     FeedUrl = blobUrl,
-                    FeedDocument = feed // You can return the entire feed document, or just select necessary properties.
+                    FeedDocument = feed
                 });
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"Error uploading feed: {ex.Message}");
                 return StatusCode(500, $"Error uploading feed: {ex.Message}");
             }
         }
-
 
         [HttpGet("getUserFeeds")]
         public async Task<IActionResult> GetUserFeeds(string? userId = null, int pageNumber = 1, int pageSize = 10)
@@ -90,7 +101,6 @@ namespace BackEnd.Controllers
                 }
 
                 var orderedQuery = query.OrderByDescending(feed => feed.UploadDate) as IOrderedQueryable<Feed>;
-
                 var iterator = orderedQuery.ToFeedIterator();
                 var feeds = new List<Feed>();
 
@@ -98,18 +108,15 @@ namespace BackEnd.Controllers
                 {
                     var response = await iterator.ReadNextAsync();
                     feeds.AddRange(response);
-                    var continuationToken = response.ContinuationToken;
                 }
-
 
                 return Ok(feeds);
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"Error retrieving feeds: {ex.Message}");
                 return StatusCode(500, $"Error retrieving feeds: {ex.Message}");
             }
         }
-
-
     }
 }
