@@ -1,12 +1,10 @@
-﻿using Azure.Storage.Blobs;
-using Azure.Storage.Blobs.Models;
-using Azure.Storage.Blobs.Specialized;
+﻿using Azure.Messaging.ServiceBus;
+using Azure.Storage.Blobs;
 using BackEnd.Entities;
 using BackEnd.Models;
+using BackEnd.ViewModels;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Cosmos;
-using Microsoft.Azure.Cosmos.Linq;
-using System.Text;
 
 namespace BackEnd.Controllers
 {
@@ -16,89 +14,82 @@ namespace BackEnd.Controllers
     {
         private readonly CosmosDbContext _dbContext;
         private readonly BlobServiceClient _blobServiceClient;
-        private readonly string _feedContainer = "media";
+        private readonly ServiceBusSender _serviceBusSender;
+        private readonly string _feedContainer = "media";  // Blob container for storing feeds
+        private static readonly string _cdnBaseUrl = "https://tenxcdn.azureedge.net/media/";
+        //private static readonly string _cdnBaseUrl = "https://storagetenx.blob.core.windows.net/media/";
 
-        // Static dictionary to store current session filenames and counters
-        private static Dictionary<string, int> _fileNameCounters = new Dictionary<string, int>();
-
-        public FeedsController(CosmosDbContext dbContext, BlobServiceClient blobServiceClient)
+        public FeedsController(CosmosDbContext dbContext, BlobServiceClient blobServiceClient, ServiceBusClient serviceBusClient)
         {
             _dbContext = dbContext;
             _blobServiceClient = blobServiceClient;
+            _serviceBusSender = serviceBusClient.CreateSender("new-feed-notifications");
         }
 
+        /// <summary>
+        /// Upload a new feed with media.
+        /// </summary>
         [HttpPost("uploadFeed")]
-        public async Task<IActionResult> UploadFeed([FromForm] FeedUploadModel model, [FromForm] int? chunkIndex = null, [FromForm] int? totalChunks = null)
+        public async Task<IActionResult> UploadFeed([FromForm] FeedUploadModel model)
         {
             try
             {
+                
+                // Ensure required fields are present
                 if (model.File == null || string.IsNullOrEmpty(model.UserId) || string.IsNullOrEmpty(model.FileName))
                 {
                     return BadRequest("Missing required fields.");
                 }
 
+                // Get Blob container reference
                 var containerClient = _blobServiceClient.GetBlobContainerClient(_feedContainer);
-                var blobName = model.FileName;
 
-                // Use BlockBlobClient directly from the container client
-                var blockBlobClient = containerClient.GetBlockBlobClient(blobName);
+                // Generate a unique Blob name using a unique value
+                var blobName = $"{Guid.NewGuid()}-{model.File.FileName}";
+                var blobClient = containerClient.GetBlobClient(blobName);
 
-                // For chunked upload
-                if (chunkIndex.HasValue && totalChunks.HasValue)
+                // Upload the file to Blob Storage
+                using (var stream = model.File.OpenReadStream())
                 {
-                    var blockId = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{chunkIndex:D6}"));
-                    using (var stream = model.File.OpenReadStream())
-                    {
-                        await blockBlobClient.StageBlockAsync(blockId, stream);
-                    }
-
-                    // Commit blocks after final chunk
-                    if (chunkIndex.Value == totalChunks.Value - 1)
-                    {
-                        var blockList = Enumerable.Range(0, totalChunks.Value)
-                            .Select(i => Convert.ToBase64String(Encoding.UTF8.GetBytes($"{i:D6}"))).ToList();
-                        await blockBlobClient.CommitBlockListAsync(blockList);
-                        return await SaveFeedToCosmosDb(blockBlobClient.Uri.ToString(), model);
-                    }
-                }
-                else
-                {
-                    // Direct upload for small files
-                    using (var stream = model.File.OpenReadStream())
-                    {
-                        await blockBlobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = model.ContentType });
-                    }
-                    return await SaveFeedToCosmosDb(blockBlobClient.Uri.ToString(), model);
+                    await blobClient.UploadAsync(stream);
                 }
 
-                return Ok(new { Message = "Chunk uploaded successfully." });
+                // Get the Blob URL
+                var blobUrl = blobClient.Uri.ToString();
+
+                // Save the feed data to CosmosDB
+                //var feed = new Feed
+                //{
+                //    id = Guid.NewGuid().ToString(),  // Generate unique ID for the feed
+                //    UserId = model.UserId,
+                //    Description = model.Description,
+                //    FeedUrl = blobUrl,  // Set the Blob URL
+                //    UploadDate = DateTime.UtcNow
+                //};
+                //await _dbContext.PostsContainer.UpsertItemAsync(feed);
+
+
+                var userPost = new UserPost
+                {
+                    PostId = Guid.NewGuid().ToString(),
+                    Title = model.ProfilePic,
+                    Content = _cdnBaseUrl+""+ blobName,
+                    Caption= model.Caption,
+                    AuthorId = model.UserId,
+                    AuthorUsername = model.UserName,
+                    DateCreated = DateTime.UtcNow,
+                };
+
+                //Insert the new blog post into the database.
+                await _dbContext.PostsContainer.UpsertItemAsync<UserPost>(userPost, new PartitionKey(userPost.PostId));
+
+
+                return Ok(new { Message = "Feed uploaded successfully.", FeedId = userPost.PostId });
             }
             catch (Exception ex)
             {
                 return StatusCode(500, $"Error uploading feed: {ex.Message}");
             }
-        }
-        private async Task<IActionResult> SaveFeedToCosmosDb(string blobUrl, FeedUploadModel model)
-        {
-            var feed = new Feed
-            {
-                id = Guid.NewGuid().ToString(),
-                UserId = model.UserId,
-                Description = model.Description,
-                FeedUrl = blobUrl,
-                ContentType = model.ContentType,
-                FileSize = model.FileSize,
-                UploadDate = DateTime.UtcNow
-            };
-
-            await _dbContext.FeedsContainer.CreateItemAsync(feed);
-            return Ok(new
-            {
-                Message = "Feed uploaded successfully.",
-                FeedId = feed.id,
-                FeedUrl = blobUrl,
-                FeedDocument = feed
-            });
         }
 
         [HttpGet("getUserFeeds")]
@@ -106,31 +97,73 @@ namespace BackEnd.Controllers
         {
             try
             {
-                var queryOptions = new QueryRequestOptions { MaxItemCount = pageSize };
+                //var queryOptions = new QueryRequestOptions { MaxItemCount = pageSize };
 
-                IQueryable<Feed> query = _dbContext.FeedsContainer
-                    .GetItemLinqQueryable<Feed>(requestOptions: queryOptions);
+                // Start with the base query
+                //IQueryable<Feed> query = _dbContext.FeedsContainer
+                //    .GetItemLinqQueryable<Feed>(requestOptions: queryOptions);
 
-                if (!string.IsNullOrEmpty(userId))
+                // Apply the userId filter if provided
+                //if (!string.IsNullOrEmpty(userId))
+                //{
+                //    query = query.Where(feed => feed.UserId == userId);
+                //}
+
+                // Apply ordering after filtering
+                //var orderedQuery = query.OrderByDescending(feed => feed.UploadDate) as IOrderedQueryable<Feed>;
+
+                // Execute the query with pagination using continuation tokens
+                //var iterator = orderedQuery.ToFeedIterator();
+                //var feeds = new List<Feed>();
+
+                //while (iterator.HasMoreResults)
+                //{
+                //    var response = await iterator.ReadNextAsync();
+                //    feeds.AddRange(response);
+
+                //    // Optionally, handle the continuation token for pagination
+                //    var continuationToken = response.ContinuationToken;
+                //}
+
+                //foreach (var item in feeds)
+                //{
+                //    item.ProfilePic = "https://storagetenx.blob.core.windows.net/profilepic/" + Utility.GetLastPartAfterHyphen(item.FeedUrl);
+                //}
+
+
+
+                var m = new BlogHomePageViewModel();
+                var numberOfPosts = 100;
+                var userPosts = new List<UserPost>();
+
+                var queryString = $"SELECT TOP {numberOfPosts} * FROM f WHERE f.type='post' ORDER BY f.dateCreated DESC";
+                var query = _dbContext.FeedsContainer.GetItemQueryIterator<UserPost>(new QueryDefinition(queryString));
+                while (query.HasMoreResults)
                 {
-                    query = query.Where(feed => feed.UserId == userId);
+                    var response = await query.ReadNextAsync();
+                    var ru = response.RequestCharge;
+                    userPosts.AddRange(response.ToList());
                 }
 
-                var orderedQuery = query.OrderByDescending(feed => feed.UploadDate) as IOrderedQueryable<Feed>;
-                var iterator = orderedQuery.ToFeedIterator();
-                var feeds = new List<Feed>();
-
-                while (iterator.HasMoreResults)
+                //if there are no posts in the feedcontainer, go to the posts container.
+                // There may be one that has not propagated to the feed container yet by the azure function (or the azure function is not running).
+                if (!userPosts.Any())
                 {
-                    var response = await iterator.ReadNextAsync();
-                    feeds.AddRange(response);
+                    var queryFromPostsContainter = _dbContext.PostsContainer.GetItemQueryIterator<UserPost>(new QueryDefinition(queryString));
+                    while (queryFromPostsContainter.HasMoreResults)
+                    {
+                        var response = await queryFromPostsContainter.ReadNextAsync();
+                        var ru = response.RequestCharge;
+                        userPosts.AddRange(response.ToList());
+                    }
                 }
 
-                return Ok(feeds);
+                m.BlogPostsMostRecent = userPosts;
+
+                return Ok(m);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error retrieving feeds: {ex.Message}");
                 return StatusCode(500, $"Error retrieving feeds: {ex.Message}");
             }
         }

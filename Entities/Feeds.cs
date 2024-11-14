@@ -10,6 +10,9 @@ namespace BackEnd.Entities
         [JsonPropertyName("userId")]
         public string UserId { get; set; } = string.Empty;
 
+        [JsonPropertyName("profilePic")]
+        public string ProfilePic { get; set; } = string.Empty;
+
         [JsonPropertyName("feedUrl")]
         public string FeedUrl { get; set; } = string.Empty;
 

@@ -14,6 +14,7 @@ namespace BackEnd.Models
         [JsonPropertyName("fileName")]
         public string FileName { get; set; } = string.Empty;
 
+
         [JsonPropertyName("contentType")]
         public string ContentType { get; set; } = string.Empty;
 
@@ -23,12 +24,13 @@ namespace BackEnd.Models
         [JsonPropertyName("file")]
         public IFormFile File { get; set; } = null!;  // Use IFormFile to handle file upload
 
-        // Add ChunkIndex to track the chunk number being uploaded
-        [JsonPropertyName("chunkIndex")]
-        public int ChunkIndex { get; set; }
+        [JsonPropertyName("profilePic")]
+        public string ProfilePic { get; set; } = string.Empty;
 
-        // Add TotalChunks to track the total number of chunks for the file
-        [JsonPropertyName("totalChunks")]
-        public int TotalChunks { get; set; }
+        [JsonPropertyName("userName")]
+        public string UserName { get; set; } = string.Empty;
+
+        [JsonPropertyName("caption")]
+        public string Caption { get; set; } = string.Empty;
     }
 }
