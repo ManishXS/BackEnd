@@ -1,5 +1,4 @@
-﻿using Azure.Messaging.ServiceBus;
-using Azure.Storage.Blobs;
+﻿using Azure.Storage.Blobs;
 using BackEnd.Entities;
 using BackEnd.Models;
 using BackEnd.ViewModels;
@@ -14,16 +13,14 @@ namespace BackEnd.Controllers
     {
         private readonly CosmosDbContext _dbContext;
         private readonly BlobServiceClient _blobServiceClient;
-        private readonly ServiceBusSender _serviceBusSender;
         private readonly string _feedContainer = "media";  // Blob container for storing feeds
         private static readonly string _cdnBaseUrl = "https://tenxcdn.azureedge.net/media/";
         //private static readonly string _cdnBaseUrl = "https://storagetenx.blob.core.windows.net/media/";
 
-        public FeedsController(CosmosDbContext dbContext, BlobServiceClient blobServiceClient, ServiceBusClient serviceBusClient)
+        public FeedsController(CosmosDbContext dbContext, BlobServiceClient blobServiceClient)
         {
             _dbContext = dbContext;
             _blobServiceClient = blobServiceClient;
-            _serviceBusSender = serviceBusClient.CreateSender("new-feed-notifications");
         }
 
         /// <summary>

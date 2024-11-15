@@ -1,16 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using System.Diagnostics;
-using BlogWebApp.ViewModels;
+﻿using BlogWebApp.ViewModels;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
-using Microsoft.AspNetCore.Authorization;
 using BackEnd.Entities;
-using System.Security.Claims;
-using Microsoft.AspNetCore.Authentication;
-using Azure.Messaging.ServiceBus;
 using Azure.Storage.Blobs;
 using Microsoft.Azure.Cosmos;
 
@@ -22,14 +12,12 @@ namespace BackEnd.Controllers
     {
         private readonly CosmosDbContext _dbContext;
         private readonly BlobServiceClient _blobServiceClient;
-        private readonly ServiceBusSender _serviceBusSender;
         private readonly string _feedContainer = "media";  // Blob container for storing feeds
 
-        public UserController(CosmosDbContext dbContext, BlobServiceClient blobServiceClient, ServiceBusClient serviceBusClient)
+        public UserController(CosmosDbContext dbContext, BlobServiceClient blobServiceClient)
         {
             _dbContext = dbContext;
             _blobServiceClient = blobServiceClient;
-            _serviceBusSender = serviceBusClient.CreateSender("new-feed-notifications");
         }
 
 
