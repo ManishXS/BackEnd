@@ -226,6 +226,9 @@ namespace BackEnd.Controllers
                     var obj = new dynamic[] { userPostLike.PostId, userPostLike };
 
                     var result = await _dbContext.PostsContainer.Scripts.ExecuteStoredProcedureAsync<string>("createLike", new PartitionKey(userPostLike.PostId), obj);
+
+                    //ChatHub chatHub = new ChatHub(_dbContext);
+                    //chatHub.SendBellCount(bp.AuthorId, "1");
                 }
             }
 

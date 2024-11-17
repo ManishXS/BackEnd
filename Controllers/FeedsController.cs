@@ -14,8 +14,8 @@ namespace BackEnd.Controllers
         private readonly CosmosDbContext _dbContext;
         private readonly BlobServiceClient _blobServiceClient;
         private readonly string _feedContainer = "media";  // Blob container for storing feeds
-        private static readonly string _cdnBaseUrl = "https://tenxcdn.azureedge.net/media/";
-        //private static readonly string _cdnBaseUrl = "https://storagetenx.blob.core.windows.net/media/";
+        //private static readonly string _cdnBaseUrl = "https://tenxcdn.azureedge.net/media/";
+        private static readonly string _cdnBaseUrl = "https://storagetenx.blob.core.windows.net/media/";
 
         public FeedsController(CosmosDbContext dbContext, BlobServiceClient blobServiceClient)
         {
@@ -94,41 +94,6 @@ namespace BackEnd.Controllers
         {
             try
             {
-                //var queryOptions = new QueryRequestOptions { MaxItemCount = pageSize };
-
-                // Start with the base query
-                //IQueryable<Feed> query = _dbContext.FeedsContainer
-                //    .GetItemLinqQueryable<Feed>(requestOptions: queryOptions);
-
-                // Apply the userId filter if provided
-                //if (!string.IsNullOrEmpty(userId))
-                //{
-                //    query = query.Where(feed => feed.UserId == userId);
-                //}
-
-                // Apply ordering after filtering
-                //var orderedQuery = query.OrderByDescending(feed => feed.UploadDate) as IOrderedQueryable<Feed>;
-
-                // Execute the query with pagination using continuation tokens
-                //var iterator = orderedQuery.ToFeedIterator();
-                //var feeds = new List<Feed>();
-
-                //while (iterator.HasMoreResults)
-                //{
-                //    var response = await iterator.ReadNextAsync();
-                //    feeds.AddRange(response);
-
-                //    // Optionally, handle the continuation token for pagination
-                //    var continuationToken = response.ContinuationToken;
-                //}
-
-                //foreach (var item in feeds)
-                //{
-                //    item.ProfilePic = "https://storagetenx.blob.core.windows.net/profilepic/" + Utility.GetLastPartAfterHyphen(item.FeedUrl);
-                //}
-
-
-
                 var m = new BlogHomePageViewModel();
                 var numberOfPosts = 100;
                 var userPosts = new List<UserPost>();
@@ -158,6 +123,83 @@ namespace BackEnd.Controllers
                 m.BlogPostsMostRecent = userPosts;
 
                 return Ok(m);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error retrieving feeds: {ex.Message}");
+            }
+        }
+
+
+        [HttpGet("getChats")]
+        public async Task<IActionResult> getChats(string userId)
+        {
+            try
+            {
+                var userChats = new List<Chats>();
+                var queryString = $"SELECT * FROM f WHERE CONTAINS(f.chatId, 'userId')";
+                queryString = queryString.Replace("userId", userId);
+                var query = _dbContext.ChatsContainer.GetItemQueryIterator<Chats>(new QueryDefinition(queryString));
+                while (query.HasMoreResults)
+                {
+                    var response = await query.ReadNextAsync();
+                    userChats.AddRange(response.ToList());
+                }
+
+                List<ChatList> chatList = new List<ChatList>();
+                foreach (var item in userChats)
+                {
+                    string toUserId= item.chatId;
+                    toUserId= toUserId.Replace(userId,"");
+                    toUserId = toUserId.Replace("|", "");
+
+                    IQueryable<BlogUser> queryUsers = _dbContext.UsersContainer.GetItemLinqQueryable<BlogUser>();
+
+                    if (!string.IsNullOrEmpty(toUserId))
+                    {
+                        queryUsers = queryUsers.Where(x => x.UserId == toUserId);
+                    }
+
+                    var resultUser = queryUsers.Select(item => new
+                    {
+                        item.Id,
+                        item.UserId,
+                        item.Username,
+                        item.ProfilePicUrl
+                    }).FirstOrDefault();
+
+                    if (resultUser != null)
+                    {
+                        ChatList chatList1=new ChatList();
+                        chatList1.toUserName = resultUser.Username;
+                        chatList1.toUserId = resultUser.UserId;
+                        chatList1.toUserProfilePic = resultUser.ProfilePicUrl;
+                       
+                        chatList1.chatWindow = new List<ChatWindow>();
+
+                        List<ChatWindow> chatWindows = new List<ChatWindow>();
+                        foreach (var chatMessage in item.chatMessage.Reverse())
+                        {
+                            ChatWindow chatWindow = new ChatWindow();
+                            chatWindow.message = chatMessage.message;
+                            if (chatMessage.fromuserId== userId)
+                            {
+                                chatWindow.type = "reply";
+                            }
+                            else
+                            {
+                                chatWindow.type = "sender";
+                            }
+                            chatWindows.Add(chatWindow);
+                        }
+
+                        chatList1.chatWindow.AddRange(chatWindows);
+
+                        chatList.Add(chatList1);
+                    }
+                }
+
+                return Ok(chatList);
             }
             catch (Exception ex)
             {
