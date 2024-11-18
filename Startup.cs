@@ -95,6 +95,22 @@ namespace BackEnd
                 app.UseHttpsRedirection();
                 app.UseRouting();
                 app.UseMiddleware<SkipAuthorizationMiddleware>();
+
+                app.Use(async (context, next) =>
+                {
+                    logger.LogInformation("Incoming Request: {Method} {Path}", context.Request.Method, context.Request.Path);
+                    await next.Invoke();
+                    logger.LogInformation("Response Status: {StatusCode}", context.Response.StatusCode);
+                });
+
+                app.UseCors(builder => builder
+            .WithOrigins("https://tenxso.com")
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials());
+
+
+
                 app.UseCors(builder => builder
                         .AllowAnyHeader()
                         .AllowAnyMethod()
@@ -107,6 +123,11 @@ namespace BackEnd
                 app.UseEndpoints(endpoints =>
                 {
                     endpoints.MapControllers();
+                    endpoints.MapHub<ChatHub>("/chatHub").RequireCors(builder => builder
+                        .WithOrigins("https://tenxso.com")
+                        .AllowAnyHeader()
+                        .AllowAnyMethod()
+                        .AllowCredentials());
                 });
 
                 logger.LogInformation("Application configured successfully.");

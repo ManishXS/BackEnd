@@ -1,4 +1,5 @@
 ﻿using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
 using BackEnd.Entities;
 using BackEnd.Models;
 using BackEnd.ViewModels;
@@ -27,28 +28,30 @@ namespace BackEnd.Controllers
         {
             try
             {
-                if (model.File == null || string.IsNullOrEmpty(model.UserId) || string.IsNullOrEmpty(model.FileName))
+                if (!ModelState.IsValid)
                 {
-                    return BadRequest("Missing required fields.");
+                    return BadRequest(ModelState);
                 }
 
                 var containerClient = _blobServiceClient.GetBlobContainerClient(_feedContainer);
                 string fileName = model.FileName;
                 int suffix = 0;
+                int maxRetries = 1000;
 
                 while (await containerClient.GetBlobClient(fileName).ExistsAsync())
                 {
-                    suffix++;
+                    if (++suffix > maxRetries)
+                    {
+                        return StatusCode(500, "Too many retries while generating a unique file name.");
+                    }
                     var fileExtension = Path.GetExtension(model.FileName);
                     var fileNameWithoutExt = Path.GetFileNameWithoutExtension(model.FileName);
                     fileName = $"{fileNameWithoutExt}-{suffix}{fileExtension}";
                 }
 
                 var blobClient = containerClient.GetBlobClient(fileName);
-                using (var stream = model.File.OpenReadStream())
-                {
-                    await blobClient.UploadAsync(stream);
-                }
+                await using var stream = model.File.OpenReadStream();
+                await blobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = model.File.ContentType });
 
                 var blobUrl = $"{_cdnBaseUrl}{fileName}";
 
@@ -56,22 +59,27 @@ namespace BackEnd.Controllers
                 {
                     PostId = Guid.NewGuid().ToString(),
                     Title = model.ProfilePic,
-                    Content = blobUrl, 
+                    Content = blobUrl,
                     Caption = model.Caption,
                     AuthorId = model.UserId,
                     AuthorUsername = model.UserName,
                     DateCreated = DateTime.UtcNow,
                 };
 
-                await _dbContext.PostsContainer.UpsertItemAsync<UserPost>(userPost, new PartitionKey(userPost.PostId));
+                await _dbContext.PostsContainer.UpsertItemAsync(userPost, new PartitionKey(userPost.PostId));
 
                 return Ok(new { Message = "Feed uploaded successfully.", FeedId = userPost.PostId });
             }
+            catch (CosmosException ex)
+            {
+                return StatusCode(500, $"Cosmos DB error: {ex.Message}");
+            }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Error uploading feed: {ex.Message}");
+                return StatusCode(500, $"Unexpected error: {ex.Message}");
             }
         }
+
 
 
         [HttpGet("getUserFeeds")]
@@ -79,39 +87,34 @@ namespace BackEnd.Controllers
         {
             try
             {
-                var m = new BlogHomePageViewModel();
-                var numberOfPosts = 100;
+                var offset = (pageNumber - 1) * pageSize;
+                var queryString = $@"
+            SELECT * FROM f 
+            WHERE f.type = 'post'
+            ORDER BY f.dateCreated DESC
+            OFFSET {offset} LIMIT {pageSize}";
+
+                var query = _dbContext.FeedsContainer.GetItemQueryIterator<UserPost>(new QueryDefinition(queryString));
                 var userPosts = new List<UserPost>();
 
-                var queryString = $"SELECT TOP {numberOfPosts} * FROM f WHERE f.type='post' ORDER BY f.dateCreated DESC";
-                var query = _dbContext.FeedsContainer.GetItemQueryIterator<UserPost>(new QueryDefinition(queryString));
                 while (query.HasMoreResults)
                 {
                     var response = await query.ReadNextAsync();
-                    var ru = response.RequestCharge;
                     userPosts.AddRange(response.ToList());
                 }
 
-                if (!userPosts.Any())
-                {
-                    var queryFromPostsContainter = _dbContext.PostsContainer.GetItemQueryIterator<UserPost>(new QueryDefinition(queryString));
-                    while (queryFromPostsContainter.HasMoreResults)
-                    {
-                        var response = await queryFromPostsContainter.ReadNextAsync();
-                        var ru = response.RequestCharge;
-                        userPosts.AddRange(response.ToList());
-                    }
-                }
-
-                m.BlogPostsMostRecent = userPosts;
-
-                return Ok(m);
+                return Ok(userPosts);
+            }
+            catch (CosmosException ex)
+            {
+                return StatusCode(500, $"Cosmos DB error: {ex.Message}");
             }
             catch (Exception ex)
             {
-                return StatusCode(500, $"Error retrieving feeds: {ex.Message}");
+                return StatusCode(500, $"Unexpected error: {ex.Message}");
             }
         }
+
 
 
         [HttpGet("getChats")]
