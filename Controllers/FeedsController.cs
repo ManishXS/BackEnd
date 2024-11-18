@@ -13,8 +13,7 @@ namespace BackEnd.Controllers
     {
         private readonly CosmosDbContext _dbContext;
         private readonly BlobServiceClient _blobServiceClient;
-        private readonly string _feedContainer = "media";  // Blob container for storing feeds
-        //private static readonly string _cdnBaseUrl = "https://tenxcdn.azureedge.net/media/";
+        private readonly string _feedContainer = "media";  
         private static readonly string _cdnBaseUrl = "https://storagetenx.blob.core.windows.net/media/";
 
         public FeedsController(CosmosDbContext dbContext, BlobServiceClient blobServiceClient)
@@ -23,63 +22,48 @@ namespace BackEnd.Controllers
             _blobServiceClient = blobServiceClient;
         }
 
-        /// <summary>
-        /// Upload a new feed with media.
-        /// </summary>
         [HttpPost("uploadFeed")]
         public async Task<IActionResult> UploadFeed([FromForm] FeedUploadModel model)
         {
             try
             {
-                
-                // Ensure required fields are present
                 if (model.File == null || string.IsNullOrEmpty(model.UserId) || string.IsNullOrEmpty(model.FileName))
                 {
                     return BadRequest("Missing required fields.");
                 }
 
-                // Get Blob container reference
                 var containerClient = _blobServiceClient.GetBlobContainerClient(_feedContainer);
+                string fileName = model.FileName;
+                int suffix = 0;
 
-                // Generate a unique Blob name using a unique value
-                var blobName = $"{Guid.NewGuid()}-{model.File.FileName}";
-                var blobClient = containerClient.GetBlobClient(blobName);
+                while (await containerClient.GetBlobClient(fileName).ExistsAsync())
+                {
+                    suffix++;
+                    var fileExtension = Path.GetExtension(model.FileName);
+                    var fileNameWithoutExt = Path.GetFileNameWithoutExtension(model.FileName);
+                    fileName = $"{fileNameWithoutExt}-{suffix}{fileExtension}";
+                }
 
-                // Upload the file to Blob Storage
+                var blobClient = containerClient.GetBlobClient(fileName);
                 using (var stream = model.File.OpenReadStream())
                 {
                     await blobClient.UploadAsync(stream);
                 }
 
-                // Get the Blob URL
-                var blobUrl = blobClient.Uri.ToString();
-
-                // Save the feed data to CosmosDB
-                //var feed = new Feed
-                //{
-                //    id = Guid.NewGuid().ToString(),  // Generate unique ID for the feed
-                //    UserId = model.UserId,
-                //    Description = model.Description,
-                //    FeedUrl = blobUrl,  // Set the Blob URL
-                //    UploadDate = DateTime.UtcNow
-                //};
-                //await _dbContext.PostsContainer.UpsertItemAsync(feed);
-
+                var blobUrl = $"{_cdnBaseUrl}{fileName}";
 
                 var userPost = new UserPost
                 {
                     PostId = Guid.NewGuid().ToString(),
                     Title = model.ProfilePic,
-                    Content = _cdnBaseUrl+""+ blobName,
-                    Caption= model.Caption,
+                    Content = blobUrl, 
+                    Caption = model.Caption,
                     AuthorId = model.UserId,
                     AuthorUsername = model.UserName,
                     DateCreated = DateTime.UtcNow,
                 };
 
-                //Insert the new blog post into the database.
                 await _dbContext.PostsContainer.UpsertItemAsync<UserPost>(userPost, new PartitionKey(userPost.PostId));
-
 
                 return Ok(new { Message = "Feed uploaded successfully.", FeedId = userPost.PostId });
             }
@@ -88,6 +72,7 @@ namespace BackEnd.Controllers
                 return StatusCode(500, $"Error uploading feed: {ex.Message}");
             }
         }
+
 
         [HttpGet("getUserFeeds")]
         public async Task<IActionResult> GetUserFeeds(string? userId = null, int pageNumber = 1, int pageSize = 10)
@@ -107,8 +92,6 @@ namespace BackEnd.Controllers
                     userPosts.AddRange(response.ToList());
                 }
 
-                //if there are no posts in the feedcontainer, go to the posts container.
-                // There may be one that has not propagated to the feed container yet by the azure function (or the azure function is not running).
                 if (!userPosts.Any())
                 {
                     var queryFromPostsContainter = _dbContext.PostsContainer.GetItemQueryIterator<UserPost>(new QueryDefinition(queryString));
