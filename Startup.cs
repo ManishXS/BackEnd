@@ -57,15 +57,15 @@ namespace BackEnd
 
                 services.AddSingleton<IConfiguration>(updatedConfiguration);
 
-                //services.AddCors(options =>
-                //{
-                //    options.AddPolicy("AllowAll", builder =>
-                //    {
-                //        builder.AllowAnyOrigin()
-                //               .AllowAnyHeader()
-                //               .AllowAnyMethod();
-                //    });
-                //});
+                services.AddCors(options =>
+                {
+                    options.AddPolicy("AllowAll", builder =>
+                    {
+                        builder.AllowAnyOrigin()
+                               .AllowAnyHeader()
+                               .AllowAnyMethod();
+                    });
+                });
                 services.AddSignalR();
                 services.AddControllers();
                 services.AddSwaggerGen();
@@ -105,10 +105,11 @@ namespace BackEnd
 
 
                 app.UseCors(builder => builder
-                        .AllowAnyHeader()
-                        .AllowAnyMethod()
-                        .SetIsOriginAllowed((host) => true)
-                        .AllowCredentials());
+                    .WithOrigins("https://tenxso.com")  // Explicitly specify the allowed origin
+                    .AllowAnyHeader()                   // Allow any headers
+                    .AllowAnyMethod()                   // Allow any HTTP methods (GET, POST, etc.)
+                    .AllowCredentials());               // Allow credentials (cookies, authentication)
+
 
                 logger.LogInformation("Middleware configured.");
 
