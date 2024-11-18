@@ -14,8 +14,10 @@ namespace BackEnd.Controllers
     {
         private readonly CosmosDbContext _dbContext;
         private readonly BlobServiceClient _blobServiceClient;
-        private readonly string _feedContainer = "media";  
-        private static readonly string _cdnBaseUrl = "https://storagetenx.blob.core.windows.net/media/";
+        private readonly string _feedContainer = "media";
+
+
+        private static readonly string _cdnBaseUrl = "https://tenxcdn-dtg6a0dtb9aqg3bb.z02.azurefd.net/media/";
 
         public FeedsController(CosmosDbContext dbContext, BlobServiceClient blobServiceClient)
         {
@@ -53,7 +55,7 @@ namespace BackEnd.Controllers
                 await using var stream = model.File.OpenReadStream();
                 await blobClient.UploadAsync(stream, new BlobHttpHeaders { ContentType = model.File.ContentType });
 
-                var blobUrl = $"{_cdnBaseUrl}{fileName}";
+                var blobUrl = $"{_cdnBaseUrl}{fileName}"; 
 
                 var userPost = new UserPost
                 {
@@ -79,9 +81,6 @@ namespace BackEnd.Controllers
                 return StatusCode(500, $"Unexpected error: {ex.Message}");
             }
         }
-
-
-
 
         [HttpGet("getUserFeeds")]
         public async Task<IActionResult> GetUserFeeds(string? userId = null, int pageNumber = 1, int pageSize = 10)
@@ -124,9 +123,6 @@ namespace BackEnd.Controllers
             }
         }
 
-
-
-
         [HttpGet("getChats")]
         public async Task<IActionResult> getChats(string userId)
         {
@@ -145,8 +141,8 @@ namespace BackEnd.Controllers
                 List<ChatList> chatList = new List<ChatList>();
                 foreach (var item in userChats)
                 {
-                    string toUserId= item.chatId;
-                    toUserId= toUserId.Replace(userId,"");
+                    string toUserId = item.chatId;
+                    toUserId = toUserId.Replace(userId, "");
                     toUserId = toUserId.Replace("|", "");
 
                     IQueryable<BlogUser> queryUsers = _dbContext.UsersContainer.GetItemLinqQueryable<BlogUser>();
@@ -166,11 +162,11 @@ namespace BackEnd.Controllers
 
                     if (resultUser != null)
                     {
-                        ChatList chatList1=new ChatList();
+                        ChatList chatList1 = new ChatList();
                         chatList1.toUserName = resultUser.Username;
                         chatList1.toUserId = resultUser.UserId;
                         chatList1.toUserProfilePic = resultUser.ProfilePicUrl;
-                       
+
                         chatList1.chatWindow = new List<ChatWindow>();
 
                         List<ChatWindow> chatWindows = new List<ChatWindow>();
@@ -178,7 +174,7 @@ namespace BackEnd.Controllers
                         {
                             ChatWindow chatWindow = new ChatWindow();
                             chatWindow.message = chatMessage.message;
-                            if (chatMessage.fromuserId== userId)
+                            if (chatMessage.fromuserId == userId)
                             {
                                 chatWindow.type = "reply";
                             }

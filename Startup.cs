@@ -103,13 +103,6 @@ namespace BackEnd
                     logger.LogInformation("Response Status: {StatusCode}", context.Response.StatusCode);
                 });
 
-                app.UseCors(builder => builder
-            .WithOrigins("https://tenxso.com")
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials());
-
-
 
                 app.UseCors(builder => builder
                         .AllowAnyHeader()
@@ -122,12 +115,8 @@ namespace BackEnd
                 app.UseAuthorization();
                 app.UseEndpoints(endpoints =>
                 {
-                    endpoints.MapControllers();
-                    endpoints.MapHub<ChatHub>("/chatHub").RequireCors(builder => builder
-                        .WithOrigins("https://tenxso.com")
-                        .AllowAnyHeader()
-                        .AllowAnyMethod()
-                        .AllowCredentials());
+
+                    endpoints.MapHub<ChatHub>("/chatHub");
                 });
 
                 logger.LogInformation("Application configured successfully.");
